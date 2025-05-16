@@ -14,6 +14,9 @@ extern char end[]; // first address after kernel loaded from ELF file
 // Bootstrap processor starts running C code here.
 // Allocate a real stack and switch to it, first
 // doing some setup required for memory allocator to work.
+
+extern void shminit(void);
+
 int
 main(void)
 {
@@ -24,7 +27,8 @@ main(void)
 	seginit();       // segment descriptors
 	picinit();       // disable pic
 	ioapicinit();    // another interrupt controller
-	consoleinit();   // console hardware
+	consoleinit(); 	 // console hardware
+	shminit();
 	uartinit();      // serial port
 	pinit();         // process table
 	tvinit();        // trap vectors

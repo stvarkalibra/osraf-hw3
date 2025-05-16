@@ -4,6 +4,7 @@
 #include "types.h"
 #include "mmu.h"
 #include "param.h"
+#include "spinlock.h"
 
 // Per-CPU state
 struct cpu {
@@ -40,6 +41,30 @@ struct context {
 
 enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+
+//
+//
+//
+//
+//JA MENJO BRE
+
+struct shm_object {
+	char ime[32];
+	char* niz_adresa_stranica[32];
+	int velicina;
+	int brojac_procesa;
+	int global_index;
+};
+
+struct shm_table {
+	struct spinlock lock;
+	struct shm_object objects[64];
+};
+
+extern struct shm_table shm_table;
+
+
+
 // Per-process state
 struct proc {
 	uint sz;                     // Size of process memory (bytes)
@@ -51,7 +76,11 @@ struct proc {
 	struct trapframe *tf;        // Trap frame for current syscall
 	struct context *context;     // swtch() here to run process
 	void *chan;                  // If non-zero, sleeping on chan
-	int killed;                  // If non-zero, have been killed
+	struct shm_object otvoreni_objekti[16];
+	char* virtuelne_adrese[16];
+	char* va;
+	int killed;
+	int flags[16];
 	struct file *ofile[NOFILE];  // Open files
 	struct inode *cwd;           // Current directory
 	char name[16];               // Process name (debugging)

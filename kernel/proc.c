@@ -5,6 +5,9 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include "vm.h"
+#include "memlayout.h"
+#include "fcntl.h"
 
 struct {
 	struct spinlock lock;
@@ -70,6 +73,7 @@ myproc(void)
 // If found, change state to EMBRYO and initialize
 // state required to run in the kernel.
 // Otherwise return 0.
+
 static struct proc*
 allocproc(void)
 {
@@ -111,7 +115,6 @@ found:
 	p->context = (struct context*)sp;
 	memset(p->context, 0, sizeof *p->context);
 	p->context->eip = (uint)forkret;
-
 	return p;
 }
 
@@ -173,9 +176,22 @@ growproc(int n)
 	return 0;
 }
 
+int
+strcmp(const char *s1, const char *s2)
+{
+	while(*s1 && (*s1 == *s2)){
+		s1++;
+		s2++;
+	}
+	return *(const unsigned char*)s1 - *(const unsigned char*)s2;
+}
+
 // Create a new process copying p as the parent.
 // Sets up stack to return as if from system call.
 // Caller must set state of returned proc to RUNNABLE.
+
+
+
 int
 fork(void)
 {
@@ -207,6 +223,51 @@ fork(void)
 			np->ofile[i] = filedup(curproc->ofile[i]);
 	np->cwd = idup(curproc->cwd);
 
+	for (i = 0; i < 16; i++) {
+		if (curproc->otvoreni_objekti[i].ime[0] != '\0') {
+			acquire(&shm_table.lock);
+			struct shm_object *global_obj = 0;
+			for (int k = 0; k < 64; k++) {
+				if (shm_table.objects[k].brojac_procesa > 0 &&
+					strncmp(shm_table.objects[k].ime, curproc->otvoreni_objekti[i].ime,
+							sizeof(shm_table.objects[k].ime)) == 0) {
+					global_obj = &shm_table.objects[k];
+				break;
+							}
+			}
+			if (!global_obj) {
+				release(&shm_table.lock);
+				panic("fork: global shared memory object not found");
+			}
+
+			global_obj->brojac_procesa++;
+			release(&shm_table.lock);
+
+			np->otvoreni_objekti[i] = *global_obj;
+			np->virtuelne_adrese[i] = curproc->virtuelne_adrese[i];
+			np->flags[i] = curproc->flags[i];
+
+			int perm = PTE_U;
+			if (np->flags[i] == O_RDWR)
+				perm |= PTE_W;
+
+			int num_pages = global_obj->velicina / PGSIZE;
+
+			for (int j = 0; j < num_pages; j++) {
+				if (mappages(np->pgdir,
+					(char*)np->virtuelne_adrese[i] + j * PGSIZE,
+							 PGSIZE,
+				 V2P(global_obj->niz_adresa_stranica[j]),
+							 perm) < 0) {
+					panic("fork: mappages failed");
+							 }
+			}
+		}
+
+	}
+
+
+
 	safestrcpy(np->name, curproc->name, sizeof(curproc->name));
 
 	pid = np->pid;
@@ -216,6 +277,8 @@ fork(void)
 	np->state = RUNNABLE;
 
 	release(&ptable.lock);
+
+
 
 	return pid;
 }
@@ -260,11 +323,47 @@ exit(void)
 		}
 	}
 
-	// Jump into the scheduler, never to return.
+	for(int i=0;i<16;i++){
+		if(curproc->otvoreni_objekti[i].velicina!=0){
+			curproc->otvoreni_objekti[i].ime[0]='\0';
+			curproc->otvoreni_objekti[i].velicina=0;
+			for(int k=0;k<32;k++){
+				if(curproc->otvoreni_objekti[i].niz_adresa_stranica[k]!=0){
+					curproc->otvoreni_objekti[i].niz_adresa_stranica[k]=0;
+				}
+			}
+	}
+
+		acquire(&shm_table.lock);
+		for (int j = 0; j < 64; j++) {
+			if (shm_table.objects[j].brojac_procesa > 0 &&
+				strcmp(shm_table.objects[j].ime, curproc->otvoreni_objekti[i].ime) == 0) {
+
+				shm_table.objects[j].brojac_procesa--;
+			}
+
+			if (shm_table.objects[j].brojac_procesa == 0) {
+				// Oslobodi fizičke stranice
+				for (int k = 0; k < 32; k++) {
+					if (shm_table.objects[j].niz_adresa_stranica[k]) {
+						kfree(shm_table.objects[j].niz_adresa_stranica[k]);
+						shm_table.objects[j].niz_adresa_stranica[k] = 0;
+					}
+				}
+				shm_table.objects[j].ime[0] = '\0';
+				shm_table.objects[j].velicina = 0;
+			}
+		}
+
+		release(&shm_table.lock);
+	}
+
+	// Set process state to ZOMBIE and schedule
 	curproc->state = ZOMBIE;
 	sched();
 	panic("zombie exit");
 }
+
 
 // Wait for a child process to exit and return its pid.
 // Return -1 if this process has no children.

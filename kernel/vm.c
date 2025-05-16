@@ -57,7 +57,7 @@ walkpgdir(pde_t *pgdir, const void *va, int alloc)
 // Create PTEs for virtual addresses starting at va that refer to
 // physical addresses starting at pa. va and size might not
 // be page-aligned.
-static int
+int
 mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
 {
 	char *a, *last;
@@ -77,6 +77,20 @@ mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
 		pa += PGSIZE;
 	}
 	return 0;
+}
+
+void unmap(pde_t *pgdir, void *uva, uint npages) {
+	char *page_ptr = (char*)PGROUNDDOWN((uint)uva);
+	char *last_page = page_ptr + npages * 4096 - 1;
+
+	while(page_ptr <= last_page){
+		pte_t* ptr = walkpgdir(pgdir, page_ptr,0);
+		if(!ptr || !(*ptr && PTE_P)){
+			panic("Not mapped");
+		}
+		*ptr = 0;
+		page_ptr += 4096;
+	}
 }
 
 // There is one page table per process, plus one that's used when
@@ -383,3 +397,33 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
 	}
 	return 0;
 }
+
+void
+uvmunmap(pde_t *pgdir, char *uva, uint npages, int dofree)
+{
+	char *a;
+	uint i;
+	pte_t *pte;
+
+	if ((uint)uva % PGSIZE != 0)
+		panic("uvmunmap: not aligned");
+
+	for (i = 0, a = uva; i < npages; i++, a += PGSIZE) {
+		pte = walkpgdir(pgdir, a, 0);
+		if (!pte)
+			panic("uvmunmap: walkpgdir failed");
+		if ((*pte & PTE_P) == 0)
+			panic("uvmunmap: page not present");
+
+		if (dofree) {
+			char *pa = (char*)P2V(PTE_ADDR(*pte));
+			kfree(pa);
+		}
+
+		*pte = 0; // ukloni mapiranje
+	}
+
+	// osveži TLB
+	lcr3(V2P(pgdir));
+}
+

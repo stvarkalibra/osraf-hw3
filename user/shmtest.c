@@ -55,6 +55,7 @@ int test2(void)
 	}
 	printf("\nstarting test 2\n");
 	int fd = shm_open("/test2");
+
 	int size = shm_trunc(fd, 400);
 	int *p;
 	shm_map(fd, (void **) &p, O_RDWR);
